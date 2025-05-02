@@ -1,97 +1,117 @@
 import streamlit as st
+import os
+import time
+import glob
 import cv2
 import numpy as np
 import pytesseract
+from PIL import Image
 from gtts import gTTS
-import os
-
-st.set_page_config(page_title="OCR y Texto a Voz", layout="centered")
+from googletrans import Translator
 
 st.markdown(
     """
     <style>
     .stApp {
-        background-color: #101010;
-        color: #FFFFFF;
+        background: linear-gradient(to right, #f2f2f2, #e6e6ff);
+        background-attachment: fixed;
+        font-family: 'Helvetica', sans-serif;
     }
-
-    h1 {
-        color: #FF6347 !important;
-        text-align: center;
-        font-family: 'Arial', sans-serif;
-        font-size: 2.5em;
-    }
-
-    .stButton > button, .stCameraInput, .stRadio > div {
-        background-color: #FF6347 !important;
-        color: white !important;
-        border-radius: 8px;
-        border: 1px solid #FF6347;
-        font-weight: bold;
-    }
-
-    .stSidebar {
-        background-color: #1C1C1C !important;
-    }
-
-    .stSidebar div, .stSidebar label, .stSidebar span {
-        color: white !important;
-    }
-
-    .css-1offfwp, .css-1aumxhk {
-        color: white !important;
-    }
-
-    .stMarkdown {
-        font-family: 'Arial', sans-serif;
-        font-size: 1.2em;
+    h1, h2, h3 {
+        color: #333366;
     }
     </style>
     """,
     unsafe_allow_html=True
 )
 
-st.title("OCR y Conversión de Texto a Voz")
+def clear_old_audios(days):
+    mp3_files = glob.glob("temp/*.mp3")
+    now = time.time()
+    limit = days * 86400
+    for f in mp3_files:
+        if os.stat(f).st_mtime < now - limit:
+            os.remove(f)
 
-st.markdown("Captura una imagen con texto y conviértelo automáticamente en audio. ¡Es muy fácil!")
+clear_old_audios(7)
+os.makedirs("temp", exist_ok=True)
 
+st.markdown("<h1>📷 Extrae texto y escúchalo</h1>", unsafe_allow_html=True)
+st.markdown("<p>Sube una imagen o usa la cámara para capturar texto y escucharlo traducido al idioma que prefieras.</p>", unsafe_allow_html=True)
 
-img_file_buffer = st.camera_input("Toma una foto para leer el texto")
+use_camera = st.toggle("📸 Capturar desde la cámara")
 
+if use_camera:
+    image_buffer = st.camera_input("Haz una captura")
+else:
+    image_buffer = None
 
 with st.sidebar:
-    apply_filter = st.radio("¿Aplicar filtro?", ('Sí', 'No'))
+    st.header("🔧 Configuración de Procesamiento")
+    apply_filter = st.checkbox("Invertir colores (mejora OCR)")
+    st.markdown("---")
+    st.header("🌍 Traducción y Voz")
+    translator = Translator()
+    lang_options = {
+        "Español": "es", "Inglés": "en", "Francés": "fr",
+        "Alemán": "de", "Italiano": "it", "Japonés": "ja"
+    }
+    input_lang = st.selectbox("Idioma original del texto", list(lang_options.keys()))
+    output_lang = st.selectbox("Idioma de salida", list(lang_options.keys()))
+    accents = {
+        "Estándar": "com", "India": "co.in", "Reino Unido": "co.uk",
+        "Canadá": "ca", "Australia": "com.au"
+    }
+    voice_region = st.selectbox("Acento del audio", list(accents.keys()))
+    show_translated_text = st.checkbox("Mostrar texto traducido")
 
-if img_file_buffer is not None:
-  
-    bytes_data = img_file_buffer.getvalue()
-    cv2_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+detected_text = ""
 
+uploaded_img = st.file_uploader("📁 O carga una imagen desde tu dispositivo", type=["jpg", "png", "jpeg"])
+if uploaded_img:
+    img_bytes = uploaded_img.read()
+    img_path = os.path.join("temp", uploaded_img.name)
+    with open(img_path, 'wb') as f:
+        f.write(img_bytes)
+    st.image(img_path, caption="Imagen seleccionada", use_column_width=True)
+    img_cv = cv2.imread(img_path)
+    img_rgb = cv2.cvtColor(img_cv, cv2.COLOR_BGR2RGB)
+    detected_text = pytesseract.image_to_string(img_rgb)
+    st.markdown("### 📝 Texto detectado:")
+    st.write(detected_text)
 
-    if apply_filter == 'Sí':
-        cv2_img = cv2.cvtColor(cv2_img, cv2.COLOR_BGR2GRAY)
+if image_buffer:
+    bytes_data = image_buffer.getvalue()
+    cv_img = cv2.imdecode(np.frombuffer(bytes_data, np.uint8), cv2.IMREAD_COLOR)
+    if apply_filter:
+        cv_img = cv2.bitwise_not(cv_img)
+    img_rgb = cv2.cvtColor(cv_img, cv2.COLOR_BGR2RGB)
+    detected_text = pytesseract.image_to_string(img_rgb)
+    st.markdown("### 📝 Texto capturado:")
+    st.write(detected_text)
 
-  
-    img_rgb = cv2.cvtColor(cv2_img, cv2.COLOR_BGR2RGB)
-    st.image(img_rgb, caption="Imagen procesada", use_column_width=True)
+def convert_text_to_audio(src_lang, dest_lang, content, region_tld):
+    translated = translator.translate(content, src=src_lang, dest=dest_lang)
+    translated_text = translated.text
+    tts = gTTS(translated_text, lang=dest_lang, tld=region_tld, slow=False)
+    filename = translated_text[:15].replace(" ", "_") + ".mp3"
+    filepath = os.path.join("temp", filename)
+    tts.save(filepath)
+    return filepath, translated_text
 
- 
-    extracted_text = pytesseract.image_to_string(img_rgb)
-    st.subheader("Texto detectado:")
-    st.write(extracted_text)
-
-   
-    if extracted_text.strip() != "":
-        tts = gTTS(extracted_text, lang='es')
-        audio_path = "audio_detectado.mp3"
-        tts.save(audio_path)
-
-        st.subheader("Escuchar el texto:")
-        audio_file = open(audio_path, "rb")
-        audio_bytes = audio_file.read()
-        st.audio(audio_bytes, format="audio/mp3")
-
-        audio_file.close()
-        os.remove(audio_path)
+if st.button("🔊 Escuchar traducción"):
+    if detected_text.strip() == "":
+        st.error("No se ha encontrado texto. Asegúrate de subir o capturar una imagen con texto visible.")
     else:
-        st.warning("No se detectó texto en la imagen. Intenta con una imagen más clara.")
+        file_path, trans_text = convert_text_to_audio(
+            lang_options[input_lang],
+            lang_options[output_lang],
+            detected_text,
+            accents[voice_region]
+        )
+        audio = open(file_path, "rb")
+        st.audio(audio.read(), format="audio/mp3")
+        if show_translated_text:
+            st.markdown("### 📄 Traducción:")
+            st.write(trans_text)
+

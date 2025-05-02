@@ -114,4 +114,3 @@ if st.button("🔊 Escuchar traducción"):
         if show_translated_text:
             st.markdown("### 📄 Traducción:")
             st.write(trans_text)
-
